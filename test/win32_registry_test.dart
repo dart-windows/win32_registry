@@ -242,4 +242,55 @@ void main() {
     expect(() => hkcu.createKey(subkeyName), throwsA(isA<WindowsException>()));
     expect(hkcu.subkeyNames.contains(subkeyName), false);
   });
+
+  test('ObserveValueChanges emits events when subkey values change', () async {
+    final hkcu = Registry.openPath(RegistryHive.currentUser,
+        desiredAccessRights: AccessRights.allAccess);
+
+    const subkeyName = 'Win32RegistryStreamTestKey';
+    final subkey = hkcu.createKey(subkeyName);
+    expect(hkcu.subkeyNames.contains(subkeyName), true);
+
+    const deeperSubkeyName = 'DeeperKey';
+    final deeperSubkey = subkey.createKey(deeperSubkeyName);
+    expect(subkey.subkeyNames.contains(deeperSubkeyName), true);
+
+    final streamFuture = expectLater(
+        subkey.observeValuesChanges(includeSubkeys: true).take(4),
+        emitsInOrder([
+          null, // <- create subkey
+          null, // <- create deeper subkey
+          null, // <- delete deeper subkey
+          null, // <- delete subkey
+        ]));
+
+    final deepValue =
+        const RegistryValue('DeeperTestValue', RegistryValueType.int32, 1234);
+
+    final value =
+        const RegistryValue('TestValue', RegistryValueType.int32, 1234);
+
+    deeperSubkey.createValue(deepValue);
+    await Future<void>.delayed(const Duration(seconds: 1));
+    expect(deeperSubkey.getValue('DeeperTestValue', expandPaths: false),
+        isNotNull);
+
+    subkey.createValue(value);
+    await Future<void>.delayed(const Duration(seconds: 1));
+    expect(subkey.getValue('TestValue', expandPaths: false), isNotNull);
+
+    deeperSubkey.deleteValue('DeeperTestValue');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    expect(
+        deeperSubkey.getValue('DeeperTestValue', expandPaths: false), isNull);
+
+    subkey.deleteValue('TestValue');
+    await Future<void>.delayed(const Duration(seconds: 1));
+    expect(subkey.getValue('TestValue', expandPaths: false), isNull);
+
+    await streamFuture.then((_) {
+      hkcu.deleteKey(subkeyName, recursive: true);
+      expect(hkcu.subkeyNames.contains(subkeyName), isFalse);
+    });
+  });
 }
